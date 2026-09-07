@@ -1,0 +1,25 @@
+{
+  "groups": [
+    {
+      "id": "le-cafe",
+      "label": "Le Cafe (Novotel Century, Wanchai)",
+      "phrases": [
+        "Le Cafe Novotel Century",
+        "Le Café Novotel Century",
+        "Le Cafe Wanchai",
+        "Le Cafe Hong Kong buffet"
+      ]
+    },
+    {
+      "id": "novotel-century",
+      "label": "Novotel Century Hong Kong (context)",
+      "phrases": [
+        "Novotel Century",
+        "Novotel Century Hong Kong",
+        "諾富特世紀酒店"
+      ]
+    }
+  ],
+  "platform_hints": ["instagram", "facebook", "threads"],
+  "exclusions": ["Hyderabad", "India", "Novotel Sydney", "Novotel London", "job vacancy scam"]
+}

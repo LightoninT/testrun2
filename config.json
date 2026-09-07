@@ -1,0 +1,25 @@
+{
+  "poll_interval_minutes": 10,
+  "language": "en",
+  "region": "HK",
+  "max_items_per_query": 20,
+  "request_timeout_sec": 15,
+  "dedup_ttl_days": 90,
+  "digest_mode": "instant",
+  "sources": {
+    "google_news_rss": true,
+    "bing_news_rss": true,
+    "official_meta_apis": true
+  },
+  "notifications": {
+    "console": true,
+    "telegram": {
+      "enabled": false,
+      "note": "Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID env vars and flip to true"
+    },
+    "webhook": {
+      "enabled": false,
+      "url": ""
+    }
+  }
+}

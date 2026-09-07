@@ -1,0 +1,181 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Le Cafe — Social Keyword Tracker</title>
+<style>
+  body{font-family:system-ui,-apple-system,sans-serif;max-width:960px;margin:24px auto;padding:0 16px;background:#fafafa;color:#222}
+  header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px}
+  .panel{background:#fff;border:1px solid #e5e5e5;border-radius:12px;padding:14px 16px;margin:14px 0}
+  textarea{width:100%;min-height:76px;font:14px/1.5 inherit;border:1px solid #ccc;border-radius:8px;padding:8px}
+  input[type=text]{width:100%;font:14px inherit;border:1px solid #ccc;border-radius:8px;padding:8px}
+  .row{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px;align-items:center}
+  button{font:600 14px inherit;border:0;border-radius:8px;padding:9px 16px;cursor:pointer}
+  .run{background:#111;color:#fff}.watch{background:#0a7b3c;color:#fff}.ghost{background:#eee;color:#222}
+  button:disabled{opacity:.5;cursor:wait}
+  .card{background:#fff;border:1px solid #e5e5e5;border-radius:10px;padding:12px 14px;margin:12px 0}
+  .plat{background:#111;color:#fff;border-radius:6px;padding:2px 8px;font-size:12px;margin-right:6px}
+  .grp{background:#eef;font-size:12px;border-radius:6px;padding:2px 8px;margin-right:6px}
+  .src{color:#888;font-size:12px}.title{font-weight:600;margin:8px 0}.sn{color:#444;font-size:14px}
+  .foot{color:#777;font-size:12px;margin-top:6px}
+  #status{font-size:14px;color:#555}code{background:#eee;padding:1px 5px;border-radius:4px}
+  .hint{font-size:13px;color:#666}
+</style>
+</head>
+<body>
+<header>
+  <h2>☕ Le Cafe — Social Keyword Tracker</h2>
+  <span id="status">idle</span>
+</header>
+<p class="hint">Runs <b>entirely in your browser</b> (GitHub Pages friendly — no server). It queries Google News RSS
+through a public CORS proxy with <code>site:instagram.com OR site:facebook.com OR site:threads.net</code> filters,
+matches your keywords, dedupes via <code>localStorage</code>, and can pop browser notifications.
+For 24/7 background scans, use the repo's <b>Actions → Run tracker now</b> button (see README).</p>
+
+<div class="panel">
+  <label><b>Keywords (one per line)</b></label>
+  <textarea id="kw">Le Cafe Novotel Century
+Le Café Novotel Century
+Le Cafe Wanchai
+Le Cafe Hong Kong buffet
+Novotel Century
+諾富特世紀酒店</textarea>
+  <div class="row">
+    <div style="flex:1;min-width:200px"><label class="hint">Exclusions (comma separated)</label>
+      <input type="text" id="excl" value="Hyderabad, India, Sydney, London"></div>
+  </div>
+  <div class="row">
+    <label><input type="checkbox" class="platf" value="instagram" checked> Instagram</label>
+    <label><input type="checkbox" class="platf" value="facebook" checked> Facebook</label>
+    <label><input type="checkbox" class="platf" value="threads" checked> Threads</label>
+    <label><input type="checkbox" class="platf" value="web" checked> Web/news</label>
+  </div>
+  <div class="row">
+    <button class="run" id="btnRun">▶ Run scan now</button>
+    <button class="watch" id="btnWatch">⏱ Watch every 10 min</button>
+    <button class="ghost" id="btnNotify">🔔 Enable notifications</button>
+    <button class="ghost" id="btnClear">🧹 Clear history</button>
+  </div>
+</div>
+
+<div class="panel">
+  <b>Scheduled-scan results (from GitHub Actions, if enabled)</b>
+  <div id="scheduled" class="hint">loading…</div>
+</div>
+
+<h3>Live results (<span id="count">0</span>)</h3>
+<div id="results"><p class="hint">No scan yet — hit “Run scan now”.</p></div>
+<p class="hint">Coverage note: Meta offers no public global keyword API (CrowdTangle retired Aug 2024).
+This page catches the <i>indexed public surface</i>; connect IG/FB/Threads tokens to the Python backend
+(<code>tracker.py</code>) for real-time owned-mention tracking. Full firehose needs a licensed vendor.</p>
+
+<script>
+const $ = id => document.getElementById(id);
+const norm = s => (s||"").toLowerCase().replace(/\s+/g," ").replace(/é/g,"e").trim();
+const toks = s => (norm(s).match(/\w+/g)||[]).filter(w=>w.length>1);
+function matchPhrase(text, phrase){
+  const t = norm(text), p = norm(phrase);
+  if(!p) return false;
+  if(t.includes(p)) return true;
+  const pt = toks(p), tt = new Set(toks(t));
+  if(pt.length<=2) return pt.every(w=>tt.has(w));
+  let i=0; for(const w of toks(t)){ if(w===pt[i]){ i++; if(i===pt.length) return true; } }
+  return false;
+}
+function guessPlatform(url){
+  url=(url||"").toLowerCase();
+  if(url.includes("instagram.com")) return "instagram";
+  if(url.includes("facebook.com")||url.includes("fb.watch")) return "facebook";
+  if(url.includes("threads.")) return "threads";
+  return "web";
+}
+const seenKey="lecafe_seen_v1";
+const seen = new Set(JSON.parse(localStorage.getItem(seenKey)||"[]"));
+function saveSeen(){ try{localStorage.setItem(seenKey,JSON.stringify([...seen].slice(-500)));}catch(e){} }
+async function fetchRSS(rssUrl){
+  const proxies=[
+    "https://api.allorigins.win/raw?url=",
+    "https://corsproxy.io/?url="
+  ];
+  let lastErr="";
+  for(const px of proxies){
+    try{
+      const r=await fetch(px+encodeURIComponent(rssUrl),{signal:AbortSignal.timeout(20000)});
+      if(!r.ok){lastErr="HTTP "+r.status;continue;}
+      return await r.text();
+    }catch(e){lastErr=String(e).slice(0,120);}
+  }
+  throw new Error("proxies failed: "+lastErr);
+}
+function parseRSS(xml){
+  const doc=new DOMParser().parseFromString(xml,"text/xml");
+  return [...doc.querySelectorAll("item")].map(it=>({
+    title:(it.querySelector("title")||{}).textContent||"",
+    url:(it.querySelector("link")||{}).textContent||"",
+    snippet:(((it.querySelector("description")||{}).textContent||"").replace(/<[^>]+>/g,"")).slice(0,500),
+    published:(it.querySelector("pubDate")||{}).textContent||""
+  }));
+}
+function card(m){
+  const d=document.createElement("div");d.className="card";
+  d.innerHTML=`<div><span class="plat"></span><span class="grp"></span><span class="src"></span></div>
+    <div class="title"></div><div class="sn"></div><div class="foot"></div>`;
+  d.querySelector(".plat").textContent=m.platform;
+  d.querySelector(".grp").textContent=m.phrase;
+  d.querySelector(".src").textContent=m.source;
+  const a=document.createElement("a");a.href=m.url;a.target="_blank";a.rel="noopener";a.textContent=m.title||"(no title)";
+  d.querySelector(".title").appendChild(a);
+  d.querySelector(".sn").textContent=m.snippet;
+  d.querySelector(".foot").textContent=`published: ${m.published||"—"}`;
+  return d;
+}
+let watching=null;
+async function runScan(){
+  const phrases=$("kw").value.split("\n").map(s=>s.trim()).filter(Boolean);
+  const excl=$("excl").value.split(",").map(norm).filter(Boolean);
+  const plats=new Set([...document.querySelectorAll(".platf:checked")].map(c=>c.value));
+  const btn=$("btnRun");btn.disabled=true;$("status").textContent="scanning…";
+  let checked=0,fresh=0;const box=$("results");
+  try{
+    for(const ph of phrases){
+      const queries = [`"${ph}"`, `"${ph}" (site:instagram.com OR site:facebook.com OR site:threads.net)`];
+      for(const q of queries){
+        const rss="https://news.google.com/rss/search?q="+encodeURIComponent(q)+"&hl=en-US&gl=HK&ceid=HK:en";
+        let items=[];try{items=parseRSS(await fetchRSS(rss));}catch(e){console.warn(q,e);continue;}
+        for(const it of items.slice(0,20)){
+          checked++;
+          const blob=norm(it.title+" "+it.snippet);
+          if(excl.some(x=>x&&blob.includes(x)))continue;
+          if(!matchPhrase(blob,ph))continue;
+          const plat=guessPlatform(it.url);
+          if(!plats.has(plat)&&!(plats.has("web")&&plat==="web"))continue;
+          if(seen.has(it.url))continue;
+          seen.add(it.url);fresh++;
+          box.prepend(card({platform:plat,phrase:ph,source:"google-news (live page)",...it}));
+          if(Notification.permission==="granted")new Notification(`[${plat}] ${ph}`,{body:it.title});
+        }
+      }
+    }
+    saveSeen();
+    $("count").textContent=box.querySelectorAll(".card").length;
+    $("status").textContent=`done: checked≈${checked}, new=${fresh} @ ${new Date().toLocaleTimeString()}`;
+    if(!box.querySelector(".card"))box.innerHTML='<p class="hint">No matches this scan (RSS has an indexing lag of minutes–hours).</p>';
+  }finally{btn.disabled=false;}
+}
+$("btnRun").onclick=runScan;
+$("btnWatch").onclick=e=>{
+  if(watching){clearInterval(watching);watching=null;e.target.textContent="⏱ Watch every 10 min";}
+  else{runScan();watching=setInterval(runScan,10*60*1000);e.target.textContent="⏸ Stop watching";}
+};
+$("btnNotify").onclick=async()=>{await Notification.requestPermission();$("status").textContent="notifications: "+Notification.permission;};
+$("btnClear").onclick=()=>{seen.clear();saveSeen();$("results").innerHTML="";$("count").textContent="0";};
+// show latest scheduled-scan results committed by GitHub Actions (if any)
+fetch("docs/latest-matches.json").then(r=>r.ok?r.json():null).then(j=>{
+  if(!j||!j.matches||!j.matches.length){$("scheduled").textContent="none yet — run Actions → “Run tracker now”.";return;}
+  $("scheduled").innerHTML=`${j.matches.length} matches, scheduled run @ ${j.last_run||"—"}. Newest: <b></b>`;
+  $("scheduled").querySelector("b").textContent=j.matches[0].title||"";
+}).catch(()=>{$("scheduled").textContent="none yet.";});
+</script>
+</body>
+</html>
