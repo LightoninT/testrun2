@@ -29,7 +29,24 @@ Two ways to run, pick either (or both):
 ./run.sh                 # single poll
 python3 tracker.py --watch
 python3 tracker.py --serve   # dashboard at http://localhost:8000/dashboard.html
+python3 tracker.py --watchlist  # comment-watchlist status
 ```
+
+## D. 💬 Comment tracking (Phase 1)
+
+No Meta API searches *all* public comments by keyword — so comments work in two circles:
+
+- **Watchlist posts** (`watchlist.json`): paste public IG/FB post URLs (e.g. a viral Le Cafe review).
+  Each run, the tracker crawls **new comments** on those posts, matches keywords locally,
+  and notifies with parent-post context (`↳ on: <post>`). Beyond 3 matches/post/day,
+  extras are stored quietly as digest (see `comments.per_post_cap` in `config.json`).
+- **What unlocks comment bodies:** `META_IG_TOKEN` (+ `media_id` on the entry) for Instagram,
+  `META_FB_PAGE_TOKEN` (+ `post_id`) for Facebook. Without tokens the run honestly reports
+  `⏳ … needs media_id/post_id or tokens` and only records lightweight title context.
+- Webpage has a **📌 Track this post** panel (browser-side list — mirror URLs into
+  `watchlist.json` for backend crawling). Dashboard shows 💬 comment cards with parent links.
+- `matches.db` is committed by the Actions workflow so dedup state survives between
+  scheduled runs (public post snippets only — fine for a private repo).
 
 Optional real-time adapters activate with tokens (no code change):
 

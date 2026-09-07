@@ -1,0 +1,19 @@
+{
+  "posts": [
+    {
+      "label": "EXAMPLE (inactive) — viral food-blogger post about Le Cafe",
+      "url": "https://www.instagram.com/p/REPLACE_WITH_REAL_SHORTCODE/",
+      "media_id": "",
+      "post_id": "",
+      "active": false
+    },
+    {
+      "label": "EXAMPLE (inactive) — hotel's own Facebook announcement post",
+      "url": "https://www.facebook.com/REPLACE_WITH_REAL_POST_URL",
+      "media_id": "",
+      "post_id": "",
+      "active": false
+    }
+  ],
+  "how_to": "Paste a public IG/FB post URL, set active=true. Comment BODIES need tokens (META_IG_TOKEN + media_id for IG; META_FB_PAGE_TOKEN + post_id for FB). Without tokens the tracker only records lightweight title context. Get IDs: IG media via your hashtag-search matches, FB post via Page feed."
+}

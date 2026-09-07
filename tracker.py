@@ -41,6 +41,7 @@ from datetime import datetime, timezone
 ROOT = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(ROOT, "config.json")
 KEYWORDS_PATH = os.path.join(ROOT, "keywords.json")
+WATCHLIST_PATH = os.path.join(ROOT, "watchlist.json")
 DB_PATH = os.path.join(ROOT, "matches.db")
 DASH_PATH = os.path.join(ROOT, "dashboard.html")
 STATE_PATH = os.path.join(ROOT, "state.json")
@@ -73,9 +74,24 @@ def init_db():
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       group_id TEXT, phrase TEXT, platform TEXT,
       title TEXT, snippet TEXT, url TEXT UNIQUE,
-      source TEXT, published TEXT, detected_at TEXT, hash TEXT)""")
+      source TEXT, published TEXT, detected_at TEXT, hash TEXT,
+      item_type TEXT DEFAULT 'post', parent_url TEXT DEFAULT '')""")
+    # migration-safe: older DBs lack the comment columns
+    for col in ("ALTER TABLE matches ADD COLUMN item_type TEXT DEFAULT 'post'",
+                "ALTER TABLE matches ADD COLUMN parent_url TEXT DEFAULT ''"):
+        try:
+            con.execute(col)
+        except sqlite3.OperationalError:
+            pass
     con.execute("""CREATE TABLE IF NOT EXISTS seen(
       url_hash TEXT PRIMARY KEY, first_seen TEXT)""")
+    # platform-scoped dedup for comments: key = platform:item_type:external_id
+    con.execute("""CREATE TABLE IF NOT EXISTS seen_items(
+      item_key TEXT PRIMARY KEY, first_seen TEXT)""")
+    # per-post comment cursors: skip threads that haven't grown since last poll
+    con.execute("""CREATE TABLE IF NOT EXISTS media_cursor(
+      media_key TEXT PRIMARY KEY, platform TEXT, url TEXT,
+      last_comment_count INTEGER DEFAULT 0, last_checked TEXT)""")
     con.commit()
     return con
 
@@ -258,6 +274,192 @@ def poll_official_apis():
     return out
 
 
+# ---------------------------------------------------------------- comments ---
+# Phase 1 comment tracking: "📌 Track this post" watchlist.
+# Honest model: comment BODIES require official API tokens (IG/FB comment edges).
+# Without tokens we only record lightweight oEmbed context (title/author) so the
+# watchlist stays visible — never comment text. With tokens we crawl new comments,
+# match keywords locally, and notify with parent-post context + per-post caps.
+
+def load_watchlist():
+    wl = load_json(WATCHLIST_PATH, {})
+    return [w for w in wl.get("posts", []) if w.get("active", True) and w.get("url")]
+
+
+def oembed_context(url, timeout=8):
+    """Best-effort public title/author for a post URL (no comment bodies)."""
+    try:
+        raw = fetch("https://noembed.com/embed?url=" + urllib.parse.quote(url, safe=""), timeout)
+        d = json.loads(raw)
+        if d.get("title"):
+            return {"title": d.get("title", "")[:200], "author": d.get("author_name", "")}
+    except Exception:
+        pass
+    return {}
+
+
+def graph_get(url, timeout=15):
+    return json.loads(fetch(url, timeout))
+
+
+def crawl_instagram_comments(con, media_id, post_url, phrases, excl, cfg, now, counters):
+    """GET /{ig-media-id}/comments newest-first; stop at known items. Needs META_IG_TOKEN."""
+    tok = os.environ.get("META_IG_TOKEN", "")
+    if not tok or not media_id:
+        return 0, 0
+    max_pages = cfg.get("comments", {}).get("max_pages_per_media", 2)
+    url = (f"https://graph.facebook.com/v21.0/{media_id}/comments"
+           f"?fields=id,text,timestamp,username,like_count&limit=50&access_token={tok}")
+    checked = new = 0
+    for _ in range(max_pages):
+        try:
+            d = graph_get(url)
+        except Exception as e:
+            print(f"[ig-comments] {media_id}: {e}")
+            break
+        for c in d.get("data", []):
+            checked += 1
+            key = f"instagram:comment:{c.get('id')}"
+            if con.execute("SELECT 1 FROM seen_items WHERE item_key=?", (key,)).fetchone():
+                continue
+            blob = norm(c.get("text", ""))
+            if any(x in blob for x in excl):
+                mark_seen_item(con, key, now)
+                continue
+            for group_id, phrase in phrases:
+                # comments are terse: substring match is enough (no token-order games)
+                if norm(phrase).replace("é", "e") in blob.replace("é", "e") or match_phrase(blob, norm(phrase)):
+                    if store_comment_match(con, "instagram", c.get("id"), post_url, post_url,
+                                           c.get("username", ""), c.get("text", "")[:500],
+                                           c.get("timestamp", ""), group_id, phrase,
+                                           "instagram-graph-comments", now, cfg, counters):
+                        new += 1
+                    break
+            mark_seen_item(con, key, now)
+        paging = (d.get("paging") or {}).get("next")
+        if not paging:
+            break
+        url = paging
+    return checked, new
+
+
+def crawl_facebook_comments(con, post_id, post_url, phrases, excl, cfg, now, counters):
+    """GET /{post-id}/comments stream order. Needs META_FB_PAGE_TOKEN."""
+    tok = os.environ.get("META_FB_PAGE_TOKEN", "")
+    if not tok or not post_id:
+        return 0, 0
+    max_pages = cfg.get("comments", {}).get("max_pages_per_media", 2)
+    url = (f"https://graph.facebook.com/v21.0/{post_id}/comments"
+           f"?fields=id,message,created_time,from,like_count&filter=stream&limit=50&access_token={tok}")
+    checked = new = 0
+    for _ in range(max_pages):
+        try:
+            d = graph_get(url)
+        except Exception as e:
+            print(f"[fb-comments] {post_id}: {e}")
+            break
+        for c in d.get("data", []):
+            checked += 1
+            key = f"facebook:comment:{c.get('id')}"
+            if con.execute("SELECT 1 FROM seen_items WHERE item_key=?", (key,)).fetchone():
+                continue
+            blob = norm(c.get("message", ""))
+            if any(x in blob for x in excl):
+                mark_seen_item(con, key, now)
+                continue
+            for group_id, phrase in phrases:
+                if norm(phrase).replace("é", "e") in blob.replace("é", "e") or match_phrase(blob, norm(phrase)):
+                    author = ((c.get("from") or {}).get("name", ""))
+                    if store_comment_match(con, "facebook", c.get("id"), post_url, post_url,
+                                           author, c.get("message", "")[:500],
+                                           c.get("created_time", ""), group_id, phrase,
+                                           "facebook-graph-comments", now, cfg, counters):
+                        new += 1
+                    break
+            mark_seen_item(con, key, now)
+        paging = (d.get("paging") or {}).get("next")
+        if not paging:
+            break
+        url = paging
+    return checked, new
+
+
+def mark_seen_item(con, key, now):
+    con.execute("INSERT OR IGNORE INTO seen_items(item_key,first_seen) VALUES(?,?)", (key, now))
+    con.commit()
+
+
+def store_comment_match(con, platform, cid, curl, parent_url, author, text, published,
+                        group_id, phrase, source, now, cfg, counters):
+    """Insert comment match with per-post cap: beyond cap -> digest (stored, quiet)."""
+    cap = cfg.get("comments", {}).get("per_post_cap", 3)
+    day = now[:10]
+    pkey = f"{platform}|{parent_url}|{day}"
+    counters[pkey] = counters.get(pkey, 0) + con.execute(
+        "SELECT COUNT(*) FROM matches WHERE platform=? AND parent_url=? AND substr(detected_at,1,10)=?",
+        (platform, parent_url, day)).fetchone()[0] if pkey not in counters else counters[pkey]
+    over_cap = counters[pkey] >= cap
+    title = f"💬 {author}: {text[:120]}" if author else text[:140]
+    try:
+        con.execute("""INSERT INTO matches(group_id,phrase,platform,title,snippet,url,source,
+                       published,detected_at,hash,item_type,parent_url)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (group_id, phrase, platform, title, text, curl or parent_url,
+                     source, published, now, content_hash(platform + (cid or "") + text),
+                     "comment", parent_url))
+        con.commit()
+    except sqlite3.IntegrityError:
+        return False
+    counters[pkey] += 1
+    tag = "DIGEST" if over_cap else "NEW ▶"
+    msg = (f"[{platform}/comment] ({group_id} | '{phrase}') {title}\n"
+           f"↳ on: {parent_url}\n{curl or ''}").strip()
+    print(f"{tag} {msg}")
+    if not over_cap:
+        notify_telegram("🔔 " + msg)
+        notify_webhook({"group": group_id, "phrase": phrase, "platform": platform,
+                        "item_type": "comment", "parent_url": parent_url,
+                        "title": title, "snippet": text, "url": curl or parent_url})
+    return True
+
+
+def poll_comments(con, phrases, excl, cfg, now, verbose=True):
+    """Run one comment pass over watchlist.json. Returns (checked, new)."""
+    if not cfg.get("comments", {}).get("enabled", True):
+        return 0, 0
+    watch = load_watchlist()
+    if verbose:
+        print(f"[comments] watchlist: {len(watch)} post(s)")
+    checked = new = 0
+    counters = {}
+    has_ig = bool(os.environ.get("META_IG_TOKEN", ""))
+    has_fb = bool(os.environ.get("META_FB_PAGE_TOKEN", ""))
+    for w in watch:
+        url = w["url"]
+        plat = guess_platform(url, "", "")
+        base = plat.split("?")[0]
+        media_id, post_id = w.get("media_id", ""), w.get("post_id", "")
+        # try to attach IDs from previously matched posts with the same URL
+        if (not media_id and not post_id) and verbose:
+            ctx = oembed_context(url) if cfg.get("comments", {}).get("oembed_context", True) else {}
+            extra = f" — {ctx.get('title')} (by {ctx.get('author')})" if ctx.get("title") else ""
+            print(f"[comments] ⏳ {url}{extra}")
+            print(f"           add \"media_id\" (IG) or \"post_id\" (FB) to watchlist.json "
+                  f"{'— or tokens already set, will crawl' if (has_ig or has_fb) else '— needs META_IG_TOKEN / META_FB_PAGE_TOKEN'}")
+        if base == "instagram" and media_id and has_ig:
+            c, n = crawl_instagram_comments(con, media_id, url, phrases, excl, cfg, now, counters)
+            checked += c
+            new += n
+        elif base == "facebook" and post_id and has_fb:
+            c, n = crawl_facebook_comments(con, post_id, url, phrases, excl, cfg, now, counters)
+            checked += c
+            new += n
+        con.execute("INSERT OR REPLACE INTO media_cursor(media_key,platform,url,last_comment_count,last_checked) VALUES(?,?,?,?,?)",
+                    (f"{base}:{url}", base, url, 0, now))
+    con.commit()
+    return checked, new
+
+
 def run_once(verbose=True):
     cfg = load_json(CONFIG_PATH, {})
     kw = load_json(KEYWORDS_PATH, {})
@@ -324,6 +526,11 @@ def run_once(verbose=True):
                     except sqlite3.IntegrityError:
                         pass
 
+    # Phase 1 comment pass over watchlist.json (needs tokens for bodies)
+    c_checked, c_new = poll_comments(con, phrases, excl, cfg, now, verbose=verbose)
+    checked += c_checked
+    new_matches += c_new
+
     total = con.execute("SELECT COUNT(*) FROM matches").fetchone()[0]
     con.close()
     # persist state
@@ -331,34 +538,42 @@ def run_once(verbose=True):
     state["last_run"] = now
     state["last_checked"] = checked
     state["last_new"] = new_matches
+    state["comments_checked"] = c_checked
     state["total_matches"] = total
     with open(STATE_PATH, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
     build_dashboard()
     if verbose:
-        print(f"\nDone: checked={checked} new={new_matches} total={total} @ {now}")
+        print(f"\nDone: checked={checked} (comments={c_checked}) new={new_matches} total={total} @ {now}")
     return new_matches, total
 
 
 def build_dashboard():
     con = sqlite3.connect(DB_PATH)
     try:
-        rows = con.execute("SELECT group_id,phrase,platform,title,snippet,url,source,published,detected_at FROM matches ORDER BY id DESC LIMIT 200").fetchall()
+        rows = con.execute("SELECT group_id,phrase,platform,title,snippet,url,source,published,detected_at,item_type,parent_url FROM matches ORDER BY id DESC LIMIT 200").fetchall()
     except sqlite3.OperationalError:
         rows = []
     con.close()
     state = load_json(STATE_PATH, {})
     kw = load_json(KEYWORDS_PATH, {})
+    wl = load_watchlist()
     cards = ""
-    for g, ph, plat, ti, sn, url, src, pub, det in rows:
+    for g, ph, plat, ti, sn, url, src, pub, det, itype, purl in rows:
+        badge = "💬 comment" if itype == "comment" else "📝 post"
+        parent = (f'<div class="foot">↳ on post: <a href="{html.escape(purl or "")}" target="_blank" rel="noopener">{html.escape((purl or "")[:80])}</a></div>'
+                  if itype == "comment" and purl else "")
         cards += f"""<div class="card"><div class="meta"><span class="plat">{html.escape(plat or '')}</span>
+<span class="kind">{badge}</span>
 <span class="grp">{html.escape(g or '')}</span><span class="src">{html.escape(src or '')}</span></div>
 <div class="title"><a href="{html.escape(url or '#')}" target="_blank" rel="noopener">{html.escape(ti or '(no title)')}</a></div>
-<div class="sn">{html.escape(sn or '')}</div>
+<div class="sn">{html.escape(sn or '')}</div>{parent}
 <div class="foot">match: <b>{html.escape(ph or '')}</b> · published: {html.escape(pub or '')} · detected: {html.escape(det or '')}</div></div>\n"""
     if not cards:
         cards = "<p class='empty'>No matches yet — run <code>python3 tracker.py --once</code>. RSS coverage has a search-engine indexing lag (minutes–hours); official API adapters activate when tokens are set (see README).</p>"
     groups = "".join(f"<li><b>{html.escape(g.get('id',''))}</b> — {', '.join(html.escape(p) for p in g.get('phrases',[]))}</li>" for g in kw.get("groups", []))
+    watch = "".join(f"<li><a href=\"{html.escape(w.get('url',''))}\" target=\"_blank\" rel=\"noopener\">{html.escape(w.get('label') or w.get('url',''))}</a>"
+                    + (" ✅ id linked" if w.get("media_id") or w.get("post_id") else " ⏳ needs media_id/post_id or tokens") + "</li>" for w in wl) or "<li class='empty'>empty — add post URLs to watchlist.json to track their comments</li>"
     html_doc = f"""<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Hotel Keyword Tracker — Novotel Century / Le Cafe / AKI</title>
 <style>body{{font-family:system-ui,sans-serif;max-width:900px;margin:24px auto;padding:0 16px;background:#fafafa;color:#222}}
@@ -366,10 +581,10 @@ def build_dashboard():
 .plat{{background:#111;color:#fff;border-radius:6px;padding:2px 8px;font-size:12px;margin-right:6px}}
 .grp{{background:#eef;font-size:12px;border-radius:6px;padding:2px 8px;margin-right:6px}}
 .src{{color:#888;font-size:12px}}.title{{font-weight:600;margin:8px 0}}.sn{{color:#444;font-size:14px}}.foot{{color:#777;font-size:12px;margin-top:6px}}
-.top{{display:flex;justify-content:space-between;align-items:center}}.empty{{color:#666}}code{{background:#eee;padding:1px 5px;border-radius:4px}}</style></head>
+.top{{display:flex;justify-content:space-between;align-items:center}}.empty{{color:#666}}code{{background:#eee;padding:1px 5px;border-radius:4px}}.kind{{background:#fef3c7;font-size:12px;border-radius:6px;padding:2px 8px;margin-right:6px}}</style></head>
 <body><div class="top"><h2>🏨 Keyword Tracker — Wanchai Hotels</h2><span>last run: {html.escape(state.get('last_run','—'))} · total: {state.get('total_matches','?')}</span></div>
 <p>Tracking Instagram / Facebook / Threads <i>public indexed surface</i> via News-RSS + official API adapters (activate with tokens). Poll every ~10 min: <code>python3 tracker.py --watch</code></p>
-<h3>Keywords</h3><ul>{groups}</ul><h3>Latest matches ({len(rows)})</h3>{cards}
+<h3>Keywords</h3><ul>{groups}</ul><h3>📌 Comment watchlist ({len(wl)} post(s))</h3><ul>{watch}</ul><h3>Latest matches ({len(rows)})</h3>{cards}
 <p style="color:#888;font-size:12px">Coverage note: Meta offers no public global keyword API (CrowdTangle shut down Aug 2024). RSS catches indexed public posts; connect IG/FB/Threads tokens for real-time owned mentions; add a licensed vendor (Brandwatch/Meltwater) for full firehose.</p></body></html>"""
     with open(DASH_PATH, "w", encoding="utf-8") as f:
         f.write(html_doc)
@@ -381,6 +596,7 @@ def main():
     ap.add_argument("--watch", action="store_true", help="loop forever")
     ap.add_argument("--serve", action="store_true", help="watch + serve dashboard on :8000")
     ap.add_argument("--list", action="store_true", help="list keywords")
+    ap.add_argument("--watchlist", action="store_true", help="show comment watchlist status")
     ap.add_argument("--interval", type=float, default=None)
     a = ap.parse_args()
     if a.list:
@@ -389,6 +605,15 @@ def main():
             print(f"[{g['id']}] {g.get('label','')}")
             for p in g.get("phrases", []):
                 print(f"   - {p}")
+        return
+    if a.watchlist:
+        wl = load_json(WATCHLIST_PATH, {}).get("posts", [])
+        print(f"watchlist: {len(wl)} post(s) "
+              f"(IG token: {'yes' if os.environ.get('META_IG_TOKEN') else 'no'}, "
+              f"FB token: {'yes' if os.environ.get('META_FB_PAGE_TOKEN') else 'no'})")
+        for w in wl:
+            rid = w.get("media_id") or w.get("post_id") or "no id yet"
+            print(f"  [{'ON' if w.get('active', True) else 'off'}] {w.get('label', '')} :: {w.get('url', '')} [{rid}]")
         return
     if a.serve:
         import threading

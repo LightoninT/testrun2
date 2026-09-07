@@ -24,11 +24,11 @@ jobs:
           import sqlite3, json
           con = sqlite3.connect('matches.db')
           try:
-              rows = con.execute('SELECT group_id,phrase,platform,title,snippet,url,source,published,detected_at FROM matches ORDER BY id DESC LIMIT 100').fetchall()
+              rows = con.execute('SELECT group_id,phrase,platform,title,snippet,url,source,published,detected_at,item_type,parent_url FROM matches ORDER BY id DESC LIMIT 100').fetchall()
           except Exception:
               rows = []
           con.close()
-          keys = ['group','phrase','platform','title','snippet','url','source','published','detected_at']
+          keys = ['group','phrase','platform','title','snippet','url','source','published','detected_at','item_type','parent_url']
           state = {}
           try:
               state = json.load(open('state.json'))
@@ -38,10 +38,11 @@ jobs:
                      'matches': [dict(zip(keys, r)) for r in rows]},
                     open('docs/latest-matches.json','w'), ensure_ascii=False, indent=2)
           "
-      - name: Commit results (dashboard + JSON feed)
+      - name: Commit results (DB dedup state + dashboard + JSON feed)
         run: |
           git config user.name "tracker-bot"
           git config user.email "tracker-bot@users.noreply.github.com"
-          git add docs/latest-matches.json dashboard.html state.json || true
+          git pull --rebase || true
+          git add matches.db docs/latest-matches.json dashboard.html state.json || true
           git diff --cached --quiet || git commit -m "tracker scan $(date -u +%FT%TZ)"
           git push

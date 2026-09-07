@@ -60,6 +60,15 @@ Novotel Century
 </div>
 
 <div class="panel">
+  <b>📌 Track this post's comments</b>
+  <p class="hint">Paste a public Instagram/Facebook post URL (e.g. a viral Le Cafe review). Saved in this browser;
+  mirror it into <code>watchlist.json</code> so the Python backend crawls its comments (needs API tokens for bodies).</p>
+  <div class="row"><input type="text" id="postUrl" placeholder="https://www.instagram.com/p/… or https://www.facebook.com/…">
+  <button class="run" id="btnTrack">＋ Track</button></div>
+  <div id="tracked" class="hint">none yet</div>
+</div>
+
+<div class="panel">
   <b>Scheduled-scan results (from GitHub Actions, if enabled)</b>
   <div id="scheduled" class="hint">loading…</div>
 </div>
@@ -170,6 +179,20 @@ $("btnWatch").onclick=e=>{
 };
 $("btnNotify").onclick=async()=>{await Notification.requestPermission();$("status").textContent="notifications: "+Notification.permission;};
 $("btnClear").onclick=()=>{seen.clear();saveSeen();$("results").innerHTML="";$("count").textContent="0";};
+// 📌 Track-this-post list (browser mirror of watchlist.json)
+const tkey="lecafe_tracked_posts_v1";
+const tracked=new Set(JSON.parse(localStorage.getItem(tkey)||"[]"));
+function renderTracked(){
+  $("tracked").innerHTML=tracked.size? [...tracked].map(u=>`<div>📌 <a href="${u}" target="_blank" rel="noopener">${u}</a></div>`).join("") : "none yet";
+}
+$("btnTrack").onclick=()=>{
+  const u=$("postUrl").value.trim();
+  if(!/^https?:\/\//.test(u)){$("status").textContent="paste a full https URL";return;}
+  tracked.add(u);try{localStorage.setItem(tkey,JSON.stringify([...tracked].slice(-100)));}catch(e){}
+  $("postUrl").value="";renderTracked();
+  $("status").textContent="tracked — also add it to watchlist.json for backend comment crawling";
+};
+renderTracked();
 // show latest scheduled-scan results committed by GitHub Actions (if any)
 fetch("docs/latest-matches.json").then(r=>r.ok?r.json():null).then(j=>{
   if(!j||!j.matches||!j.matches.length){$("scheduled").textContent="none yet — run Actions → “Run tracker now”.";return;}

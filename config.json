@@ -6,6 +6,13 @@
   "request_timeout_sec": 15,
   "dedup_ttl_days": 90,
   "digest_mode": "instant",
+  "comments": {
+    "enabled": true,
+    "max_pages_per_media": 2,
+    "per_post_cap": 3,
+    "oembed_context": true,
+    "note": "Comment bodies need META_IG_TOKEN (+media_id) / META_FB_PAGE_TOKEN (+post_id). Beyond per_post_cap matches/post/day are stored quietly as digest."
+  },
   "sources": {
     "google_news_rss": true,
     "bing_news_rss": true,
