@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Le Cafe tracker every 15 min (free-tier friendly)
+
+[Timer]
+# Normal watch. For PR crisis: change to *:0/5 and reload.
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=90
+
+[Install]
+WantedBy=timers.target

@@ -84,6 +84,21 @@ export THREADS_TOKEN=... THREADS_USER_ID=...
 export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...   # instant alerts
 ```
 
+## F. $0 production setup (official APIs + cron, no paid services)
+
+| Layer | Free choice | In this repo |
+|---|---|---|
+| Meta/Threads API calls | $0 (standard Graph/Threads usage is free) | `tracker.py` official adapters — dormant until tokens set |
+| Scheduler | $0 `cron`/systemd on existing PC, hotel server, or free tier (Oracle Always Free / AWS free) | `cron/crontab.example`, `cron/tracker.{service,timer}` |
+| Alerts | $0 Slack webhook / Teams Workflows webhook / SMTP email / Telegram | `notify_all()` fan-out; secrets via `.env.example` → `~/.tracker-env` (chmod 600) |
+| Rate safety | 200 Graph calls/hr enforced in code | `rate_limits` in `config.json` + SQLite `api_budget` bucket — crawlers defer, never burn the token |
+
+Real costs to budget instead: **time** — Meta App Review (Business verification + screencast,
+1–2 weeks; everything prepared in `meta-app-review/`: permission checklist, privacy-policy
+boilerplate, stdlib deletion-callback server), and **scope honesty** (official APIs cover
+your own assets + hashtag discovery, not the whole internet — broad firehose stays a paid
+vendor decision, documented in the plan).
+
 ## Push to GitHub (run these once)
 
 ```bash

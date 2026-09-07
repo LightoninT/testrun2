@@ -6,6 +6,10 @@
   "request_timeout_sec": 15,
   "dedup_ttl_days": 90,
   "digest_mode": "instant",
+  "rate_limits": {
+    "graph_calls_per_hour": 200,
+    "note": "Free Meta tier ≈200 Graph calls/hr/user. Comment crawlers defer (not fail) when the SQLite-backed budget is spent."
+  },
   "comments": {
     "enabled": true,
     "max_pages_per_media": 2,
@@ -29,6 +33,18 @@
     "telegram": {
       "enabled": false,
       "note": "Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID env vars and flip to true"
+    },
+    "slack": {
+      "enabled": false,
+      "note": "Free: create an Incoming Webhook (api.slack.com/messaging/webhooks), export SLACK_WEBHOOK_URL"
+    },
+    "teams": {
+      "enabled": false,
+      "note": "Free: Power Automate 'When a HTTP request is received' URL, export TEAMS_WEBHOOK_URL"
+    },
+    "email": {
+      "enabled": false,
+      "note": "Free SMTP: export SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/ALERT_EMAIL_TO (+ALERT_EMAIL_FROM). Gmail needs an App Password."
     },
     "webhook": {
       "enabled": false,

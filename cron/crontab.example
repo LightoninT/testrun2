@@ -1,0 +1,9 @@
+# $0 self-hosted scheduler — crontab example
+# Install:  crontab -e   then paste the lines below (adjust the path).
+# Needs:    python3 only. Secrets via ~/.tracker-env (chmod 600), see ../.env.example.
+
+# Normal watch: every 15 min (well inside the free 200 Graph calls/hr budget)
+*/15 * * * * . $HOME/.tracker-env 2>/dev/null; cd /opt/social-tracker-for-le-cafe && /usr/bin/python3 tracker.py --once >> tracker.log 2>&1
+
+# PR-crisis watch (comment out until needed): every 5 min, crisis posture
+# */5 * * * * . $HOME/.tracker-env 2>/dev/null; cd /opt/social-tracker-for-le-cafe && TRACKER_CRISIS=1 /usr/bin/python3 tracker.py --once >> tracker-crisis.log 2>&1

@@ -1,0 +1,14 @@
+[Unit]
+Description=Le Cafe social keyword tracker (single poll)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=%h/social-tracker-for-le-cafe
+EnvironmentFile=-%h/.tracker-env
+ExecStart=/usr/bin/python3 tracker.py --once
+StandardOutput=append:%h/social-tracker-for-le-cafe/tracker.log
+StandardError=inherit
+# Install: cp cron/tracker.{service,timer} ~/.config/systemd/user/ &&
+#   systemctl --user daemon-reload && systemctl --user enable --now tracker.timer

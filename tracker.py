@@ -283,6 +283,76 @@ def notify_webhook(payload):
         return False
 
 
+def notify_slack(text):
+    """Free: Slack Incoming Webhook (api.slack.com/messaging/webhooks)."""
+    url = os.environ.get("SLACK_WEBHOOK_URL", "")
+    if not url:
+        return False
+    try:
+        data = json.dumps({"text": text[:3500]}).encode()
+        req = urllib.request.Request(url, data=data,
+                                     headers={"Content-Type": "application/json", **UA})
+        urllib.request.urlopen(req, timeout=10).read()
+        return True
+    except Exception as e:
+        print(f"[slack] failed: {e}")
+        return False
+
+
+def notify_teams(text):
+    """Free: Teams Workflows webhook (Power Automate 'Post to channel' HTTP trigger).
+    Legacy Office 365 connectors retired 2024 — use a Workflows 'When a HTTP
+    request is received' URL, which accepts {'text': ...} or adaptive cards."""
+    url = os.environ.get("TEAMS_WEBHOOK_URL", "")
+    if not url:
+        return False
+    try:
+        data = json.dumps({"text": text[:3500]}).encode()
+        req = urllib.request.Request(url, data=data,
+                                     headers={"Content-Type": "application/json", **UA})
+        urllib.request.urlopen(req, timeout=10).read()
+        return True
+    except Exception as e:
+        print(f"[teams] failed: {e}")
+        return False
+
+
+def send_email(subject, body):
+    """Free: plain SMTP (Gmail App Password, Outlook, or any host). Stdlib only."""
+    host = os.environ.get("SMTP_HOST", "")
+    to = os.environ.get("ALERT_EMAIL_TO", "")
+    if not (host and to):
+        return False
+    try:
+        import smtplib
+        from email.message import EmailMessage
+        m = EmailMessage()
+        m["Subject"] = subject[:120]
+        m["From"] = os.environ.get("ALERT_EMAIL_FROM", os.environ.get("SMTP_USER", "tracker@localhost"))
+        m["To"] = to
+        m.set_content(body[:8000])
+        port = int(os.environ.get("SMTP_PORT", "587"))
+        with smtplib.SMTP(host, port, timeout=20) as s:
+            s.starttls()
+            if os.environ.get("SMTP_USER"):
+                s.login(os.environ.get("SMTP_USER"), os.environ.get("SMTP_PASS", ""))
+            s.send_message(m)
+        return True
+    except Exception as e:
+        print(f"[smtp] failed: {e}")
+        return False
+
+
+def notify_all(msg, payload, subject="Le Cafe tracker alert"):
+    """$0 fan-out: Telegram + Slack + Teams + generic webhook + SMTP email.
+    Each channel fires only when its env/config is present; failures never block."""
+    notify_telegram(msg)
+    notify_slack(msg)
+    notify_teams(msg)
+    notify_webhook(payload)
+    send_email(subject, msg)
+
+
 def poll_official_apis():
     """Stub adapters: activate only when tokens exist. Returns [] otherwise."""
     out = []
@@ -356,8 +426,31 @@ def oembed_context(url, timeout=8):
     return {}
 
 
+def api_budget_allow(con, host, limit, window_sec=3600):
+    """Sliding-window token bucket persisted in SQLite, so it survives across
+    cron invocations. Free Meta tier ≈ 200 Graph calls/hr/user — the pollers
+    below refuse (and defer to next cycle) instead of getting the token throttled."""
+    now_ts = time.time()
+    con.execute("CREATE TABLE IF NOT EXISTS api_budget(ts REAL, host TEXT)")
+    con.execute("DELETE FROM api_budget WHERE ts < ?", (now_ts - window_sec,))
+    n = con.execute("SELECT COUNT(*) FROM api_budget WHERE host=?", (host,)).fetchone()[0]
+    if n >= limit:
+        return False
+    con.execute("INSERT INTO api_budget(ts,host) VALUES(?,?)", (now_ts, host))
+    con.commit()
+    return True
+
+
 def graph_get(url, timeout=15):
-    return json.loads(fetch(url, timeout))
+    host = urllib.parse.urlparse(url).hostname or "graph"
+    limit = load_json(CONFIG_PATH, {}).get("rate_limits", {}).get("graph_calls_per_hour", 200)
+    con = sqlite3.connect(DB_PATH)
+    try:
+        if not api_budget_allow(con, host, limit):
+            raise RuntimeError(f"rate budget exhausted for {host} ({limit}/hr) — deferring to next cycle")
+        return json.loads(fetch(url, timeout))
+    finally:
+        con.close()
 
 
 def crawl_instagram_comments(con, media_id, post_url, phrases, excl, cfg, now, counters, crisis=False):
@@ -476,10 +569,11 @@ def store_comment_match(con, platform, cid, curl, parent_url, author, text, publ
            f"↳ on: {parent_url}\n{curl or ''}").strip()
     print(f"{tag} {msg}")
     if fresh and not over_cap:
-        notify_telegram("🔔 " + msg)
-        notify_webhook({"group": group_id, "phrase": phrase, "platform": platform,
-                        "item_type": "comment", "parent_url": parent_url,
-                        "title": title, "snippet": text, "url": curl or parent_url})
+        notify_all("🔔 " + msg,
+                   {"group": group_id, "phrase": phrase, "platform": platform,
+                    "item_type": "comment", "parent_url": parent_url,
+                    "title": title, "snippet": text, "url": curl or parent_url},
+                   subject=f"[{platform} comment] {phrase}")
     return True
 
 
@@ -570,8 +664,8 @@ def run_once(verbose=True):
                 msg = f"[{plat}] ({group_id} | '{phrase}') {it['title']}\n{curl}"
                 if should_alert(it["published"], cfg, now, crisis):
                     print("NEW ▶ " + msg)
-                    notify_telegram("🔔 " + msg)
-                    notify_webhook({"group": group_id, "phrase": phrase, "platform": plat, **it, "url": curl})
+                    notify_all("🔔 " + msg,
+                               {"group": group_id, "phrase": phrase, "platform": plat, **it, "url": curl})
                 else:
                     print("STORED (stale, no alert) " + msg)
 
