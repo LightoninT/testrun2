@@ -1,7 +1,20 @@
 {
-  "last_run": "2026-09-07T10:11:24+00:00",
-  "total": 103,
+  "last_run": "2026-09-07T14:25:32+00:00",
+  "total": 104,
   "matches": [
+    {
+      "group": "novotel-century",
+      "phrase": "諾富特世紀酒店",
+      "platform": "web",
+      "title": "灣仔諾富特世紀酒店Le Café自助餐買一送一！任食生蠔+肉眼扒！",
+      "snippet": "海鮮自助午餐任食冰鎮海鮮如生蠔、凍蝦、青口、翡翠螺等、多款刺身壽司、煙三文 魚、肉眼扒、多款熱食、即煮湯麵檔、印度咖喱、多款 Mövenpick 口味雪糕及 10 數款 甜品、即磨咖啡等。",
+      "url": "https://www.weekendhk.com/飲食優惠/灣仔諾富特世紀酒店-飲食優惠-rvas-2388027/",
+      "source": "bing-news",
+      "published": "Mon, 16 Dec 2024 08:24:00 GMT",
+      "detected_at": "2026-09-07T10:29:07+00:00",
+      "item_type": "post",
+      "parent_url": ""
+    },
     {
       "group": "novotel-century",
       "phrase": "諾富特世紀酒店",
@@ -1285,19 +1298,6 @@
       "url": "https://news.google.com/rss/articles/CBMiXkFVX3lxTFB5YW9jUkNpLWpHRzRaTVN5VjNMRE85U1BuLTExekIxd1JEWkJzdmE1NGhDWnBRemZaamEyVGlIZmxaZlZxUTZnbmRoS25Gc1AtYVRvV0Q2ZEhNTWEtUkE?oc=5",
       "source": "google-news",
       "published": "Mon, 05 Jun 2017 18:43:09 GMT",
-      "detected_at": "2026-09-07T09:46:19+00:00",
-      "item_type": "post",
-      "parent_url": ""
-    },
-    {
-      "group": "novotel-century",
-      "phrase": "Novotel Century",
-      "platform": "web",
-      "title": "The biggest hotel gym in Hong Kong @novotelcenturyhk @onyxnovotel Stay · Gym · Dine · Recovery The perfect reset at Novotel Century Hong Kong. #NovotelCenturyHK #WellnessJourney #RecoveryMode #FitnessEscape #hyroxhotel Training is only half th - instagram.com",
-      "snippet": "The biggest hotel gym in Hong Kong @novotelcenturyhk @onyxnovotel Stay · Gym · Dine · Recovery The perfect reset at Novotel Century Hong Kong. #NovotelCenturyHK #WellnessJourney #RecoveryMode #FitnessEscape #hyroxhotel Training is only half th  instagram.com",
-      "url": "https://news.google.com/rss/articles/CBMiUkFVX3lxTE0wVTZzVm5JMnpvUUlqOWZlQXlfTHZWelVzdDh4NXFibWtoem84bHZaRmlXZlpIVERjYVhIcEZScGdITTNwYk5NZjc1SXVXQjRJTVE?oc=5",
-      "source": "google-news",
-      "published": "Mon, 31 Aug 2026 03:08:26 GMT",
       "detected_at": "2026-09-07T09:46:19+00:00",
       "item_type": "post",
       "parent_url": ""
