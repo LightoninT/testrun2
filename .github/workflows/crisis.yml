@@ -1,14 +1,30 @@
-name: tracker
+name: crisis-scan
+
+# PR-CRISIS rapid scanner: same tracker, 5-minute cadence + crisis posture.
+#
+# ARMING (pick one):
+#   1. One-click scan from your phone: Actions tab → crisis-scan → Run workflow.
+#   2. Continuous 5-min scans: uncomment the schedule block below, commit, push.
+#      When the crisis ends, re-comment it (or delete this file's schedule) to
+#      stop burning Actions minutes.
+#   3. Local/VPS instead: python3 tracker.py --watch --interval 5 --crisis
+#
+# REQUIRED SECRETS for instant alerts (repo Settings → Secrets → Actions):
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  (phone alerts in seconds)
+#   MATCH_WEBHOOK_URL                     (Slack/Zapier loop-in, optional)
+#   META_IG_TOKEN, META_IG_USER_ID, META_FB_PAGE_TOKEN, META_FB_PAGE_ID
+#                                         (comment bodies + owned mentions)
 
 on:
-  schedule:
-    - cron: "*/30 * * * *"   # every 30 min (GitHub's minimum effective cadence)
-  workflow_dispatch:          # Actions tab → "Run workflow" button runs it on demand
+  workflow_dispatch:          # one-click crisis scan — no schedule needed
+  # schedule:
+  #   - cron: "*/5 * * * *"   # <-- uncomment to arm continuous 5-min crisis scans
 
 permissions:
   contents: write
 
 env:
+  TRACKER_CRISIS: "1"         # force crisis posture regardless of config.json
   TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
   TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
   MATCH_WEBHOOK_URL: ${{ secrets.MATCH_WEBHOOK_URL }}
@@ -27,7 +43,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Run tracker (single poll)
+      - name: Crisis scan (single poll, fresh-only alerts)
         run: python3 tracker.py --once
       - name: Export latest matches for the webpage
         run: |
@@ -55,5 +71,5 @@ jobs:
           git config user.email "tracker-bot@users.noreply.github.com"
           git pull --rebase || true
           git add matches.db docs/latest-matches.json dashboard.html state.json || true
-          git diff --cached --quiet || git commit -m "tracker scan $(date -u +%FT%TZ)"
+          git diff --cached --quiet || git commit -m "crisis scan $(date -u +%FT%TZ)"
           git push

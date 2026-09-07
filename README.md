@@ -32,6 +32,33 @@ python3 tracker.py --serve   # dashboard at http://localhost:8000/dashboard.html
 python3 tracker.py --watchlist  # comment-watchlist status
 ```
 
+## E. 🚨 PR-crisis runbook (5-minute posture)
+
+Crisis mode = complaint keywords ON (`crisis-watch` group: food poisoning / 曱甴 / 食物中毒…)
++ alerts ONLY for content < 24h old (stale index resurfaces are stored, not pinged).
+
+| Option | How | Best for |
+|---|---|---|
+| **A. One-click scan** | Repo → **Actions → crisis-scan → Run workflow** (works from your phone) | "Check right now" |
+| **B. Continuous 5-min** | Uncomment the `schedule: */5` block in `.github/workflows/crisis.yml`, push. Re-comment when over | Full crisis watch |
+| **C. Local/VPS 5-min** | `python3 tracker.py --watch --interval 5 --crisis` (or `TRACKER_CRISIS=1`) | No Actions minutes burned |
+| **D. Webpage** | Open `index.html` → interval **every 5 min (crisis)** → Watch | Desk monitoring |
+
+Before / during a crisis, set these repo **Secrets** (Settings → Secrets → Actions) —
+both workflows already pass them through, empty = gracefully skipped:
+
+- `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` → phone ping in seconds (the critical one)
+- `MATCH_WEBHOOK_URL` → Slack/Zapier loop-in
+- `META_IG_TOKEN`/`META_IG_USER_ID`, `META_FB_PAGE_TOKEN`/`META_FB_PAGE_ID` → comment bodies + owned mentions
+
+Stand down: flip `crisis_mode.enabled` back to false (or delete the env flag), re-comment the
+`*/5` schedule, and switch local watch back to `--interval 10`.
+
+Honest limits at 5-min cadence: RSS still carries search-index lag (days for social posts —
+see README §delay note), Google tolerates ~20 reqs/cycle but may 429 under load (cycles degrade
+gracefully — a skipped cycle just retries in 5 min), and Actions `schedule` can slip a few
+minutes when GitHub is busy. True real-time on your own accounts needs the token webhooks.
+
 ## D. 💬 Comment tracking (Phase 1)
 
 No Meta API searches *all* public comments by keyword — so comments work in two circles:

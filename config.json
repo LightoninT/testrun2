@@ -13,6 +13,12 @@
     "oembed_context": true,
     "note": "Comment bodies need META_IG_TOKEN (+media_id) / META_FB_PAGE_TOKEN (+post_id). Beyond per_post_cap matches/post/day are stored quietly as digest."
   },
+  "crisis_mode": {
+    "enabled": false,
+    "note": "PR-crisis posture: extra complaint keywords ON, alerts ONLY for fresh content. Arm via config, TRACKER_CRISIS=1 env, --crisis flag, or the crisis.yml workflow.",
+    "interval_minutes": 5,
+    "alert_only_fresh_hours": 24
+  },
   "sources": {
     "google_news_rss": true,
     "bing_news_rss": true,

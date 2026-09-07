@@ -18,6 +18,21 @@
         "Novotel Century Hong Kong",
         "諾富特世紀酒店"
       ]
+    },
+    {
+      "id": "crisis-watch",
+      "label": "PR-crisis complaint terms (active ONLY in crisis mode)",
+      "crisis_only": true,
+      "phrases": [
+        "Le Cafe food poisoning",
+        "Novotel Century food poisoning",
+        "Le Cafe cockroach",
+        "Novotel 曱甴",
+        "諾富特 食物中毒",
+        "諾富特 曱甴",
+        "Le Cafe 嘔吐",
+        "Novotel Century 衛生"
+      ]
     }
   ],
   "platform_hints": ["instagram", "facebook", "threads"],

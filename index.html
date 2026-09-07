@@ -53,7 +53,12 @@ Novotel Century
   </div>
   <div class="row">
     <button class="run" id="btnRun">▶ Run scan now</button>
-    <button class="watch" id="btnWatch">⏱ Watch every 10 min</button>
+    <button class="watch" id="btnWatch">⏱ Watch</button>
+    <select id="watchIv" title="watch interval">
+      <option value="5">every 5 min (crisis)</option>
+      <option value="10" selected>every 10 min</option>
+      <option value="30">every 30 min</option>
+    </select>
     <button class="ghost" id="btnNotify">🔔 Enable notifications</button>
     <button class="ghost" id="btnClear">🧹 Clear history</button>
   </div>
@@ -174,8 +179,9 @@ async function runScan(){
 }
 $("btnRun").onclick=runScan;
 $("btnWatch").onclick=e=>{
-  if(watching){clearInterval(watching);watching=null;e.target.textContent="⏱ Watch every 10 min";}
-  else{runScan();watching=setInterval(runScan,10*60*1000);e.target.textContent="⏸ Stop watching";}
+  const mins=parseFloat($("watchIv").value)||10;
+  if(watching){clearInterval(watching);watching=null;e.target.textContent="⏱ Watch";}
+  else{runScan();watching=setInterval(runScan,mins*60*1000);e.target.textContent="⏸ Stop watching";}
 };
 $("btnNotify").onclick=async()=>{await Notification.requestPermission();$("status").textContent="notifications: "+Notification.permission;};
 $("btnClear").onclick=()=>{seen.clear();saveSeen();$("results").innerHTML="";$("count").textContent="0";};

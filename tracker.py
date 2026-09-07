@@ -14,6 +14,8 @@ How it works (honest coverage model):
 Usage:
   python3 tracker.py --once        # single poll (default)
   python3 tracker.py --watch       # loop every poll_interval_minutes
+  python3 tracker.py --watch --interval 5   # crisis cadence: every 5 min
+  python3 tracker.py --once --crisis        # force crisis posture for one run
   python3 tracker.py --serve       # serve dashboard.html on :8000 + watch in bg thread
   python3 tracker.py --list        # show tracked keywords
 
@@ -64,6 +66,25 @@ def norm(s):
     return s
 
 
+def canonical_url(url):
+    """Collapse tracking wrappers so the same story dedups to one row:
+    Bing apiclick.aspx?url=<real> -> real publisher URL; strip utm/fbclid/gclid."""
+    try:
+        q = urllib.parse.urlparse(url or "")
+        if "apiclick.aspx" in (q.path or ""):
+            inner = urllib.parse.parse_qs(q.query).get("url", [""])[0]
+            if inner:
+                return urllib.parse.unquote(inner)[:500]
+        params = urllib.parse.parse_qsl(q.query, keep_blank_values=True)
+        drop = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
+                "gclid", "fbclid", "mc_cid", "mc_eid", "igshid"}
+        kept = [(k, v) for k, v in params if k.lower() not in drop]
+        q = q._replace(query=urllib.parse.urlencode(kept))
+        return urllib.parse.urlunparse(q)[:500] or url
+    except Exception:
+        return url
+
+
 def content_hash(text):
     return hashlib.sha256(norm(text).encode("utf-8")).hexdigest()[:16]
 
@@ -96,9 +117,46 @@ def init_db():
     return con
 
 
-def all_phrases(kw):
+def is_crisis(cfg):
+    """Crisis posture: env TRACKER_CRISIS=1 wins, else config flag."""
+    if os.environ.get("TRACKER_CRISIS", "") == "1":
+        return True
+    return bool(cfg.get("crisis_mode", {}).get("enabled", False))
+
+
+def pub_age_hours(published, now):
+    """Hours between a published timestamp and now; None if unparseable."""
+    try:
+        from email.utils import parsedate_to_datetime
+        p = parsedate_to_datetime(published)
+        if p.tzinfo is None:
+            p = p.replace(tzinfo=timezone.utc)
+        n = datetime.fromisoformat(now)
+        if n.tzinfo is None:
+            n = n.replace(tzinfo=timezone.utc)
+        return (n - p).total_seconds() / 3600
+    except Exception:
+        return None
+
+
+def should_alert(published, cfg, now, crisis):
+    """Normal mode: alert on everything new. Crisis: only fresh content
+    (stale index resurfaces still get stored, quietly). Unknown age fails open."""
+    if not crisis:
+        return True
+    age = pub_age_hours(published, now)
+    if age is None:
+        return True
+    return age <= cfg.get("crisis_mode", {}).get("alert_only_fresh_hours", 24)
+
+
+def all_phrases(kw, crisis=False):
     out = []
     for g in kw.get("groups", []):
+        if not g.get("active", True):
+            continue
+        if g.get("crisis_only", False) and not crisis:
+            continue
         for p in g.get("phrases", []):
             out.append((g["id"], p))
     return out
@@ -302,7 +360,7 @@ def graph_get(url, timeout=15):
     return json.loads(fetch(url, timeout))
 
 
-def crawl_instagram_comments(con, media_id, post_url, phrases, excl, cfg, now, counters):
+def crawl_instagram_comments(con, media_id, post_url, phrases, excl, cfg, now, counters, crisis=False):
     """GET /{ig-media-id}/comments newest-first; stop at known items. Needs META_IG_TOKEN."""
     tok = os.environ.get("META_IG_TOKEN", "")
     if not tok or not media_id:
@@ -332,7 +390,7 @@ def crawl_instagram_comments(con, media_id, post_url, phrases, excl, cfg, now, c
                     if store_comment_match(con, "instagram", c.get("id"), post_url, post_url,
                                            c.get("username", ""), c.get("text", "")[:500],
                                            c.get("timestamp", ""), group_id, phrase,
-                                           "instagram-graph-comments", now, cfg, counters):
+                                           "instagram-graph-comments", now, cfg, counters, crisis):
                         new += 1
                     break
             mark_seen_item(con, key, now)
@@ -343,7 +401,7 @@ def crawl_instagram_comments(con, media_id, post_url, phrases, excl, cfg, now, c
     return checked, new
 
 
-def crawl_facebook_comments(con, post_id, post_url, phrases, excl, cfg, now, counters):
+def crawl_facebook_comments(con, post_id, post_url, phrases, excl, cfg, now, counters, crisis=False):
     """GET /{post-id}/comments stream order. Needs META_FB_PAGE_TOKEN."""
     tok = os.environ.get("META_FB_PAGE_TOKEN", "")
     if not tok or not post_id:
@@ -373,7 +431,7 @@ def crawl_facebook_comments(con, post_id, post_url, phrases, excl, cfg, now, cou
                     if store_comment_match(con, "facebook", c.get("id"), post_url, post_url,
                                            author, c.get("message", "")[:500],
                                            c.get("created_time", ""), group_id, phrase,
-                                           "facebook-graph-comments", now, cfg, counters):
+                                           "facebook-graph-comments", now, cfg, counters, crisis):
                         new += 1
                     break
             mark_seen_item(con, key, now)
@@ -390,8 +448,9 @@ def mark_seen_item(con, key, now):
 
 
 def store_comment_match(con, platform, cid, curl, parent_url, author, text, published,
-                        group_id, phrase, source, now, cfg, counters):
-    """Insert comment match with per-post cap: beyond cap -> digest (stored, quiet)."""
+                        group_id, phrase, source, now, cfg, counters, crisis=False):
+    """Insert comment match with per-post cap: beyond cap -> digest (stored, quiet).
+    In crisis mode stale comments are stored quietly too (fresh-only alerts)."""
     cap = cfg.get("comments", {}).get("per_post_cap", 3)
     day = now[:10]
     pkey = f"{platform}|{parent_url}|{day}"
@@ -411,11 +470,12 @@ def store_comment_match(con, platform, cid, curl, parent_url, author, text, publ
     except sqlite3.IntegrityError:
         return False
     counters[pkey] += 1
-    tag = "DIGEST" if over_cap else "NEW ▶"
+    fresh = should_alert(published, cfg, now, crisis)
+    tag = "NEW ▶" if (fresh and not over_cap) else ("DIGEST" if over_cap else "STORED (stale, no alert)")
     msg = (f"[{platform}/comment] ({group_id} | '{phrase}') {title}\n"
            f"↳ on: {parent_url}\n{curl or ''}").strip()
     print(f"{tag} {msg}")
-    if not over_cap:
+    if fresh and not over_cap:
         notify_telegram("🔔 " + msg)
         notify_webhook({"group": group_id, "phrase": phrase, "platform": platform,
                         "item_type": "comment", "parent_url": parent_url,
@@ -423,7 +483,7 @@ def store_comment_match(con, platform, cid, curl, parent_url, author, text, publ
     return True
 
 
-def poll_comments(con, phrases, excl, cfg, now, verbose=True):
+def poll_comments(con, phrases, excl, cfg, now, crisis=False, verbose=True):
     """Run one comment pass over watchlist.json. Returns (checked, new)."""
     if not cfg.get("comments", {}).get("enabled", True):
         return 0, 0
@@ -447,11 +507,11 @@ def poll_comments(con, phrases, excl, cfg, now, verbose=True):
             print(f"           add \"media_id\" (IG) or \"post_id\" (FB) to watchlist.json "
                   f"{'— or tokens already set, will crawl' if (has_ig or has_fb) else '— needs META_IG_TOKEN / META_FB_PAGE_TOKEN'}")
         if base == "instagram" and media_id and has_ig:
-            c, n = crawl_instagram_comments(con, media_id, url, phrases, excl, cfg, now, counters)
+            c, n = crawl_instagram_comments(con, media_id, url, phrases, excl, cfg, now, counters, crisis)
             checked += c
             new += n
         elif base == "facebook" and post_id and has_fb:
-            c, n = crawl_facebook_comments(con, post_id, url, phrases, excl, cfg, now, counters)
+            c, n = crawl_facebook_comments(con, post_id, url, phrases, excl, cfg, now, counters, crisis)
             checked += c
             new += n
         con.execute("INSERT OR REPLACE INTO media_cursor(media_key,platform,url,last_comment_count,last_checked) VALUES(?,?,?,?,?)",
@@ -463,7 +523,11 @@ def poll_comments(con, phrases, excl, cfg, now, verbose=True):
 def run_once(verbose=True):
     cfg = load_json(CONFIG_PATH, {})
     kw = load_json(KEYWORDS_PATH, {})
-    phrases = all_phrases(kw)
+    crisis = is_crisis(cfg)
+    phrases = all_phrases(kw, crisis)
+    if verbose and crisis:
+        print(f"[CRISIS MODE] {len(phrases)} phrases (incl. complaint terms), "
+              f"alerts only for content < {cfg.get('crisis_mode', {}).get('alert_only_fresh_hours', 24)}h old")
     excl = exclusions(kw)
     timeout = cfg.get("request_timeout_sec", 15)
     maxn = cfg.get("max_items_per_query", 20)
@@ -486,7 +550,8 @@ def run_once(verbose=True):
                     continue
                 if not match_phrase(blob, norm(phrase)):
                     continue
-                uh = hashlib.sha256(it["url"].encode()).hexdigest()[:24]
+                curl = canonical_url(it["url"])
+                uh = hashlib.sha256(curl.encode()).hexdigest()[:24]
                 cur = con.execute("SELECT 1 FROM seen WHERE url_hash=?", (uh,)).fetchone()
                 if cur:
                     continue
@@ -494,7 +559,7 @@ def run_once(verbose=True):
                 try:
                     con.execute("INSERT INTO matches(group_id,phrase,platform,title,snippet,url,source,published,detected_at,hash) VALUES(?,?,?,?,?,?,?,?,?,?)",
                                 (group_id, phrase, plat, it["title"][:300], it["snippet"],
-                                 it["url"], source, it["published"], now, content_hash(blob)))
+                                 curl, source, it["published"], now, content_hash(blob)))
                     con.execute("INSERT INTO seen(url_hash,first_seen) VALUES(?,?)", (uh, now))
                     con.commit()
                 except sqlite3.IntegrityError:
@@ -502,10 +567,13 @@ def run_once(verbose=True):
                     con.commit()
                     continue
                 new_matches += 1
-                msg = f"[{plat}] ({group_id} | '{phrase}') {it['title']}\n{it['url']}"
-                print("NEW ▶ " + msg)
-                notify_telegram("🔔 " + msg)
-                notify_webhook({"group": group_id, "phrase": phrase, "platform": plat, **it})
+                msg = f"[{plat}] ({group_id} | '{phrase}') {it['title']}\n{curl}"
+                if should_alert(it["published"], cfg, now, crisis):
+                    print("NEW ▶ " + msg)
+                    notify_telegram("🔔 " + msg)
+                    notify_webhook({"group": group_id, "phrase": phrase, "platform": plat, **it, "url": curl})
+                else:
+                    print("STORED (stale, no alert) " + msg)
 
     # official APIs (owned mentions — no-op without tokens)
     for it in poll_official_apis():
@@ -522,12 +590,15 @@ def run_once(verbose=True):
                         con.execute("INSERT INTO seen(url_hash,first_seen) VALUES(?,?)", (uh, now))
                         con.commit()
                         new_matches += 1
-                        print("NEW ▶ [official] " + it["title"] + "\n" + it["url"])
+                        if should_alert(it["published"], cfg, now, crisis):
+                            print("NEW ▶ [official] " + it["title"] + "\n" + it["url"])
+                        else:
+                            print("STORED (stale, no alert) [official] " + it["title"])
                     except sqlite3.IntegrityError:
                         pass
 
     # Phase 1 comment pass over watchlist.json (needs tokens for bodies)
-    c_checked, c_new = poll_comments(con, phrases, excl, cfg, now, verbose=verbose)
+    c_checked, c_new = poll_comments(con, phrases, excl, cfg, now, crisis, verbose=verbose)
     checked += c_checked
     new_matches += c_new
 
@@ -539,12 +610,13 @@ def run_once(verbose=True):
     state["last_checked"] = checked
     state["last_new"] = new_matches
     state["comments_checked"] = c_checked
+    state["crisis"] = crisis
     state["total_matches"] = total
     with open(STATE_PATH, "w", encoding="utf-8") as f:
         json.dump(state, f, indent=2)
     build_dashboard()
     if verbose:
-        print(f"\nDone: checked={checked} (comments={c_checked}) new={new_matches} total={total} @ {now}")
+        print(f"\nDone: checked={checked} (comments={c_checked}) new={new_matches} total={total} crisis={crisis} @ {now}")
     return new_matches, total
 
 
@@ -597,8 +669,11 @@ def main():
     ap.add_argument("--serve", action="store_true", help="watch + serve dashboard on :8000")
     ap.add_argument("--list", action="store_true", help="list keywords")
     ap.add_argument("--watchlist", action="store_true", help="show comment watchlist status")
+    ap.add_argument("--crisis", action="store_true", help="force crisis mode for this run")
     ap.add_argument("--interval", type=float, default=None)
     a = ap.parse_args()
+    if a.crisis:
+        os.environ["TRACKER_CRISIS"] = "1"
     if a.list:
         kw = load_json(KEYWORDS_PATH, {})
         for g in kw.get("groups", []):
