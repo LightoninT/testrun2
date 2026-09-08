@@ -33,7 +33,8 @@ narrow requests pass faster.
 6. **Record the screencast (2–4 min, required per permission):**
    - 0:00 log in with a test user, show granted scopes on the consent screen;
    - 0:30 run `python3 tracker.py --once` → show a mention/comment arriving;
-   - 1:30 trigger a keyword match → show the Slack/Telegram/email alert;
+   - 1:30 trigger a keyword match → show it landing at the top of the webpage
+     dashboard (📊 Latest updates, NEW highlight);
    - 2:30 open `dashboard.html`, show only public snippet + permalink stored
      (say out loud: "we store the minimum; authors can request deletion").
 7. **App Review → Requests:** one request per permission with the use-case text:

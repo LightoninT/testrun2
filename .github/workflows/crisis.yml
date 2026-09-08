@@ -9,11 +9,10 @@ name: crisis-scan
 #      stop burning Actions minutes.
 #   3. Local/VPS instead: python3 tracker.py --watch --interval 5 --crisis
 #
-# REQUIRED SECRETS for instant alerts (repo Settings → Secrets → Actions):
-#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID  (phone alerts in seconds)
-#   MATCH_WEBHOOK_URL                     (Slack/Zapier loop-in, optional)
+# REQUIRED SECRETS for full coverage (repo Settings → Secrets → Actions):
 #   META_IG_TOKEN, META_IG_USER_ID, META_FB_PAGE_TOKEN, META_FB_PAGE_ID
 #                                         (comment bodies + owned mentions)
+# Updates surface on the webpage dashboard — no notification secrets exist.
 
 on:
   workflow_dispatch:          # one-click crisis scan — no schedule needed
@@ -25,17 +24,9 @@ permissions:
 
 env:
   TRACKER_CRISIS: "1"         # force crisis posture regardless of config.json
-  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-  TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-  SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-  TEAMS_WEBHOOK_URL: ${{ secrets.TEAMS_WEBHOOK_URL }}
-  SMTP_HOST: ${{ secrets.SMTP_HOST }}
-  SMTP_PORT: ${{ secrets.SMTP_PORT }}
-  SMTP_USER: ${{ secrets.SMTP_USER }}
-  SMTP_PASS: ${{ secrets.SMTP_PASS }}
-  ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
-  ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
-  MATCH_WEBHOOK_URL: ${{ secrets.MATCH_WEBHOOK_URL }}
+  # Dashboard-only alerting: no notification secrets. Meta tokens enable
+  # comment bodies + owned mentions; empty = gracefully skipped.
+  META_IG_TOKEN: ${{ secrets.META_IG_TOKEN }}
   META_IG_TOKEN: ${{ secrets.META_IG_TOKEN }}
   META_IG_USER_ID: ${{ secrets.META_IG_USER_ID }}
   META_FB_PAGE_TOKEN: ${{ secrets.META_FB_PAGE_TOKEN }}

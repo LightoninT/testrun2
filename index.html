@@ -21,6 +21,18 @@
   .foot{color:#777;font-size:12px;margin-top:6px}
   #status{font-size:14px;color:#555}code{background:#eee;padding:1px 5px;border-radius:4px}
   .hint{font-size:13px;color:#666}
+  .dashTop{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px}
+  .stats{font-size:13px;color:#444;background:#f4f6fb;border-radius:8px;padding:8px 10px;margin:10px 0}
+  .stats b{color:#111}
+  #dashNew{font-weight:700;color:#0a7b3c}
+  .chip{border:1px solid #ccc;background:#fff;border-radius:20px;padding:5px 12px;font-size:13px;cursor:pointer}
+  .chip.on{background:#111;color:#fff;border-color:#111}
+  .card.fresh{border:2px solid #0a7b3c;background:#f6fef9}
+  .newpill{background:#0a7b3c;color:#fff;border-radius:6px;padding:2px 8px;font-size:12px;margin-right:6px;font-weight:700}
+  .crisispill{background:#b91c1c;color:#fff;border-radius:6px;padding:2px 8px;font-size:12px;margin-right:6px;font-weight:700}
+  .kindpill{background:#fef3c7;border-radius:6px;padding:2px 8px;font-size:12px;margin-right:6px}
+  .pctx{font-size:13px;margin-top:6px}
+  .pctx a{color:#0a58ca}
 </style>
 </head>
 <body>
@@ -28,10 +40,26 @@
   <h2>☕ Le Cafe — Social Keyword Tracker</h2>
   <span id="status">idle</span>
 </header>
-<p class="hint">Runs <b>entirely in your browser</b> (GitHub Pages friendly — no server). It queries Google News RSS
-through a public CORS proxy with <code>site:instagram.com OR site:facebook.com OR site:threads.net</code> filters,
-matches your keywords, dedupes via <code>localStorage</code>, and can pop browser notifications.
-For 24/7 background scans, use the repo's <b>Actions → Run tracker now</b> button (see README).</p>
+<p class="hint">Dashboard-first: <b>every update lands at the top of this page</b> — scheduled
+backend scans (GitHub Actions), crisis runs, and your own in-browser scans all feed the
+same <b>📊 Latest updates</b> panel below. No push channels, no accounts, nothing to install.</p>
+
+<div class="panel" id="dash">
+  <div class="dashTop"><b>📊 Latest updates</b><span id="dashNew">…</span></div>
+  <div class="stats" id="dashStats">loading…</div>
+  <div class="row">
+    <button class="chip on" data-f="all">All</button>
+    <button class="chip" data-f="instagram">Instagram</button>
+    <button class="chip" data-f="facebook">Facebook</button>
+    <button class="chip" data-f="threads">Threads</button>
+    <button class="chip" data-f="web">Web</button>
+    <span style="flex:1"></span>
+    <button class="ghost" id="btnRefresh">↻ Refresh feed</button>
+    <button class="ghost" id="btnSeen">✓ Mark all seen</button>
+  </div>
+  <div class="hint" id="dashMeta">feed: loading…</div>
+  <div id="dashList"></div>
+</div>
 
 <div class="panel">
   <label><b>Keywords (one per line)</b></label>
@@ -59,7 +87,6 @@ Novotel Century
       <option value="10" selected>every 10 min</option>
       <option value="30">every 30 min</option>
     </select>
-    <button class="ghost" id="btnNotify">🔔 Enable notifications</button>
     <button class="ghost" id="btnClear">🧹 Clear history</button>
   </div>
 </div>
@@ -73,13 +100,10 @@ Novotel Century
   <div id="tracked" class="hint">none yet</div>
 </div>
 
-<div class="panel">
-  <b>Scheduled-scan results (from GitHub Actions, if enabled)</b>
-  <div id="scheduled" class="hint">loading…</div>
-</div>
-
-<h3>Live results (<span id="count">0</span>)</h3>
-<div id="results"><p class="hint">No scan yet — hit “Run scan now”.</p></div>
+<h3>Run your own scan</h3>
+<p class="hint">Use the Keywords panel above — new finds appear at the top in <b>📊 Latest updates</b>.
+In-browser scans query Google News RSS through a public CORS proxy
+(<code>site:instagram.com OR site:facebook.com OR site:threads.net</code> filters).</p>
 <p class="hint">Coverage note: Meta offers no public global keyword API (CrowdTangle retired Aug 2024).
 This page catches the <i>indexed public surface</i>; connect IG/FB/Threads tokens to the Python backend
 (<code>tracker.py</code>) for real-time owned-mention tracking. Full firehose needs a licensed vendor.</p>
@@ -131,26 +155,70 @@ function parseRSS(xml){
     published:(it.querySelector("pubDate")||{}).textContent||""
   }));
 }
-function card(m){
-  const d=document.createElement("div");d.className="card";
-  d.innerHTML=`<div><span class="plat"></span><span class="grp"></span><span class="src"></span></div>
-    <div class="title"></div><div class="sn"></div><div class="foot"></div>`;
-  d.querySelector(".plat").textContent=m.platform;
-  d.querySelector(".grp").textContent=m.phrase;
-  d.querySelector(".src").textContent=m.source;
-  const a=document.createElement("a");a.href=m.url;a.target="_blank";a.rel="noopener";a.textContent=m.title||"(no title)";
-  d.querySelector(".title").appendChild(a);
-  d.querySelector(".sn").textContent=m.snippet;
-  d.querySelector(".foot").textContent=`published: ${m.published||"—"}`;
+// ---- 📊 top dashboard: the single surface for ALL updates ----
+let feed={matches:[],last_run:null,total:0};
+let dashFilter="all";
+const seenTsKey="lecafe_dash_seen_ts_v1";
+const feedCacheKey="lecafe_feed_cache_v1";
+function lastSeenTs(){return localStorage.getItem(seenTsKey)||"";}
+function esc(s){return String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));}
+function basePlat(p){return String(p||"web").split("?")[0];}
+function dashCard(m){
+  const fresh=(m.detected_at||"")>lastSeenTs();
+  const crisis=(m.group||"")==="crisis-watch";
+  const com=(m.item_type||"comment")==="comment";
+  const d=document.createElement("div");d.className="card"+(fresh?" fresh":"");
+  const head=document.createElement("div");
+  head.innerHTML=`${fresh?'<span class="newpill">NEW</span>':""}<span class="plat"></span>${crisis?'<span class="crisispill">🚨 crisis</span>':""}${com?'<span class="kindpill">💬 comment</span>':""}<span class="grp"></span><span class="src"></span>`;
+  head.querySelector(".plat").textContent=basePlat(m.platform);
+  head.querySelector(".grp").textContent=m.phrase||m.group||"";
+  head.querySelector(".src").textContent=m.source||"";
+  const t=document.createElement("div");t.className="title";
+  const a=document.createElement("a");a.href=m.url||"#";a.target="_blank";a.rel="noopener";a.textContent=m.title||"(no title)";
+  t.appendChild(a);
+  const sn=document.createElement("div");sn.className="sn";sn.textContent=m.snippet||"";
+  d.append(head,t,sn);
+  if(com&&m.parent_url){const pc=document.createElement("div");pc.className="pctx";pc.innerHTML="↳ on post: ";const pa=document.createElement("a");pa.href=m.parent_url;pa.target="_blank";pa.rel="noopener";pa.textContent=String(m.parent_url).slice(0,80);pc.appendChild(pa);d.appendChild(pc);}
+  const f=document.createElement("div");f.className="foot";f.textContent=`published: ${m.published||"—"} · detected: ${m.detected_at||"—"}`;
+  d.appendChild(f);
   return d;
 }
+function renderDash(){
+  const box=$("dashList");box.innerHTML="";
+  const items=feed.matches.filter(m=>dashFilter==="all"||basePlat(m.platform)===dashFilter).slice(0,30);
+  if(!items.length)box.innerHTML="<p class='hint'>No matches yet — hit “Run scan now”, or run Actions → tracker → Run workflow.</p>";
+  for(const m of items)box.appendChild(dashCard(m));
+  const freshN=feed.matches.filter(m=>(m.detected_at||"")>lastSeenTs()).length;
+  $("dashNew").textContent=freshN?`${freshN} new since your last visit`:"✓ all caught up";
+  const by={};let com=0,cri=0;
+  for(const m of feed.matches){const p=basePlat(m.platform);by[p]=(by[p]||0)+1;if(m.item_type==="comment")com++;if(m.group==="crisis-watch")cri++;}
+  $("dashStats").innerHTML=`total <b>${feed.total||feed.matches.length}</b> · `+Object.entries(by).map(([k,v])=>`${esc(k)} <b>${v}</b>`).join(" · ")+(com?` · 💬 <b>${com}</b>`:"")+(cri?` · 🚨 <b>${cri}</b>`:"");
+  $("dashMeta").textContent=`feed run @ ${feed.last_run||"—"} · showing ${items.length} newest`;
+}
+async function loadFeed(){
+  try{
+    const r=await fetch("docs/latest-matches.json?t="+Date.now());
+    if(!r.ok)throw new Error("http "+r.status);
+    const j=await r.json();
+    feed={matches:j.matches||[],last_run:j.last_run||null,total:j.total||0};
+    try{localStorage.setItem(feedCacheKey,JSON.stringify(feed));}catch(e){}
+    $("status").textContent=`feed refreshed @ ${new Date().toLocaleTimeString()}`;
+  }catch(e){
+    try{feed=JSON.parse(localStorage.getItem(feedCacheKey)||'{"matches":[]}');}catch(_){feed={matches:[]};}
+    $("status").textContent="feed offline — showing cached";
+  }
+  renderDash();
+}
+document.querySelectorAll(".chip").forEach(ch=>{ch.onclick=()=>{document.querySelectorAll(".chip").forEach(c=>c.classList.remove("on"));ch.classList.add("on");dashFilter=ch.dataset.f;renderDash();};});
+$("btnSeen").onclick=()=>{const mx=feed.matches.map(m=>m.detected_at||"").sort().pop();localStorage.setItem(seenTsKey,mx||new Date().toISOString());renderDash();};
+$("btnRefresh").onclick=()=>loadFeed();
 let watching=null;
 async function runScan(){
   const phrases=$("kw").value.split("\n").map(s=>s.trim()).filter(Boolean);
   const excl=$("excl").value.split(",").map(norm).filter(Boolean);
   const plats=new Set([...document.querySelectorAll(".platf:checked")].map(c=>c.value));
   const btn=$("btnRun");btn.disabled=true;$("status").textContent="scanning…";
-  let checked=0,fresh=0;const box=$("results");
+  let checked=0,fresh=0;
   try{
     for(const ph of phrases){
       const queries = [`"${ph}"`, `"${ph}" (site:instagram.com OR site:facebook.com OR site:threads.net)`];
@@ -166,15 +234,13 @@ async function runScan(){
           if(!plats.has(plat)&&!(plats.has("web")&&plat==="web"))continue;
           if(seen.has(it.url))continue;
           seen.add(it.url);fresh++;
-          box.prepend(card({platform:plat,phrase:ph,source:"google-news (live page)",...it}));
-          if(Notification.permission==="granted")new Notification(`[${plat}] ${ph}`,{body:it.title});
+          feed.matches.unshift({group:"live-scan",phrase:ph,platform:plat,title:it.title,snippet:it.snippet,url:it.url,source:"google-news (live page)",published:it.published,detected_at:new Date().toISOString(),item_type:"post",parent_url:""});
         }
       }
     }
     saveSeen();
-    $("count").textContent=box.querySelectorAll(".card").length;
+    renderDash();
     $("status").textContent=`done: checked≈${checked}, new=${fresh} @ ${new Date().toLocaleTimeString()}`;
-    if(!box.querySelector(".card"))box.innerHTML='<p class="hint">No matches this scan (RSS has an indexing lag of minutes–hours).</p>';
   }finally{btn.disabled=false;}
 }
 $("btnRun").onclick=runScan;
@@ -183,8 +249,7 @@ $("btnWatch").onclick=e=>{
   if(watching){clearInterval(watching);watching=null;e.target.textContent="⏱ Watch";}
   else{runScan();watching=setInterval(runScan,mins*60*1000);e.target.textContent="⏸ Stop watching";}
 };
-$("btnNotify").onclick=async()=>{await Notification.requestPermission();$("status").textContent="notifications: "+Notification.permission;};
-$("btnClear").onclick=()=>{seen.clear();saveSeen();$("results").innerHTML="";$("count").textContent="0";};
+$("btnClear").onclick=()=>{seen.clear();saveSeen();localStorage.removeItem(seenTsKey);renderDash();$("status").textContent="history cleared";};
 // 📌 Track-this-post list (browser mirror of watchlist.json)
 const tkey="lecafe_tracked_posts_v1";
 const tracked=new Set(JSON.parse(localStorage.getItem(tkey)||"[]"));
@@ -199,12 +264,10 @@ $("btnTrack").onclick=()=>{
   $("status").textContent="tracked — also add it to watchlist.json for backend comment crawling";
 };
 renderTracked();
-// show latest scheduled-scan results committed by GitHub Actions (if any)
-fetch("docs/latest-matches.json").then(r=>r.ok?r.json():null).then(j=>{
-  if(!j||!j.matches||!j.matches.length){$("scheduled").textContent="none yet — run Actions → “Run tracker now”.";return;}
-  $("scheduled").innerHTML=`${j.matches.length} matches, scheduled run @ ${j.last_run||"—"}. Newest: <b></b>`;
-  $("scheduled").querySelector("b").textContent=j.matches[0].title||"";
-}).catch(()=>{$("scheduled").textContent="none yet.";});
+// boot: load backend feed, then auto-refresh it every 5 min so the top of the
+// page is always current while you watch (in-browser scans merge into the same list)
+loadFeed();
+setInterval(()=>loadFeed(),5*60*1000);
 </script>
 </body>
 </html>

@@ -14,8 +14,8 @@ public text snippet, its permalink URL, the author's public handle, and the plat
 timestamp. We do **not** collect private messages, follower lists, or any non-public
 profile data.
 
-**3. How we use it.** Internal service-recovery alerts to hotel staff (push/email/chat).
-No advertising, no profiling, no sale or sharing with third parties.
+**3. How we use it.** Internal service-recovery review by hotel staff on the tracker's
+web dashboard. No advertising, no profiling, no sale or sharing with third parties.
 
 **4. Retention.** Matches are kept 30–90 days (`dedup_ttl_days` in config), then deleted.
 Aggregated counts without personal data may be kept for service-quality statistics.

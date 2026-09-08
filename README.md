@@ -1,7 +1,8 @@
 # ☕ Social Tracker for Le Cafe
 
 Tracks public Instagram / Facebook / Threads mentions of **Le Cafe (Novotel Century, Wanchai)** —
-plus Novotel Century context keywords — and notifies you of new matches.
+plus Novotel Century context keywords — **dashboard-first: every update lands at the top of
+the webpage** (`index.html` 📊 Latest updates panel). No push channels, no accounts, nothing to install.
 
 Two ways to run, pick either (or both):
 
@@ -9,11 +10,10 @@ Two ways to run, pick either (or both):
 
 1. Push this repo to GitHub (commands below).
 2. Repo **Settings → Pages → Deploy from a branch → `main` + `/ (root)` → Save**.
-3. Open `https://<YOU>.github.io/<REPO>/` → **▶ Run scan now**.
-   - Runs fully in the browser: Google News RSS (with
-     `site:instagram.com OR site:facebook.com OR site:threads.net` filters) via CORS proxy,
-     keyword match, `localStorage` dedup, optional browser notifications, 10-min watch mode.
-   - The page also shows the latest **scheduled-scan results** produced by GitHub Actions.
+3. Open `https://<YOU>.github.io/<REPO>/` → top panel **📊 Latest updates** shows the feed;
+   **▶ Run scan now** runs a live in-browser scan (Google News RSS with
+   `site:instagram.com OR site:facebook.com OR site:threads.net` filters via CORS proxy,
+   keyword match, `localStorage` dedup, 5/10/30-min watch mode) merged into the same top list.
 
 ## B. GitHub Actions — scheduled background scans
 
@@ -35,7 +35,7 @@ python3 tracker.py --watchlist  # comment-watchlist status
 ## E. 🚨 PR-crisis runbook (5-minute posture)
 
 Crisis mode = complaint keywords ON (`crisis-watch` group: food poisoning / 曱甴 / 食物中毒…)
-+ alerts ONLY for content < 24h old (stale index resurfaces are stored, not pinged).
++ dashboard shows ONLY content < 24h old at top (stale index resurfaces are stored, not surfaced).
 
 | Option | How | Best for |
 |---|---|---|
@@ -44,12 +44,15 @@ Crisis mode = complaint keywords ON (`crisis-watch` group: food poisoning / 曱�
 | **C. Local/VPS 5-min** | `python3 tracker.py --watch --interval 5 --crisis` (or `TRACKER_CRISIS=1`) | No Actions minutes burned |
 | **D. Webpage** | Open `index.html` → interval **every 5 min (crisis)** → Watch | Desk monitoring |
 
-Before / during a crisis, set these repo **Secrets** (Settings → Secrets → Actions) —
-both workflows already pass them through, empty = gracefully skipped:
+To unlock comment bodies + owned mentions, set these repo **Secrets**
+(Settings → Secrets → Actions) — both workflows pass them through, empty = gracefully skipped:
 
-- `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` → phone ping in seconds (the critical one)
-- `MATCH_WEBHOOK_URL` → Slack/Zapier loop-in
-- `META_IG_TOKEN`/`META_IG_USER_ID`, `META_FB_PAGE_TOKEN`/`META_FB_PAGE_ID` → comment bodies + owned mentions
+- `META_IG_TOKEN`/`META_IG_USER_ID`, `META_FB_PAGE_TOKEN`/`META_FB_PAGE_ID`,
+  `THREADS_TOKEN`/`THREADS_USER_ID`
+
+During a crisis, keep the dashboard open — it auto-refreshes the feed every 5 min,
+and the ⏱ Watch mode re-scans live on the same cadence. New items get a green
+**NEW** pill + **🚨 crisis** badge until you press **✓ Mark all seen**.
 
 Stand down: flip `crisis_mode.enabled` back to false (or delete the env flag), re-comment the
 `*/5` schedule, and switch local watch back to `--interval 10`.
@@ -57,7 +60,8 @@ Stand down: flip `crisis_mode.enabled` back to false (or delete the env flag), r
 Honest limits at 5-min cadence: RSS still carries search-index lag (days for social posts —
 see README §delay note), Google tolerates ~20 reqs/cycle but may 429 under load (cycles degrade
 gracefully — a skipped cycle just retries in 5 min), and Actions `schedule` can slip a few
-minutes when GitHub is busy. True real-time on your own accounts needs the token webhooks.
+minutes when GitHub is busy. True real-time on your own accounts needs the Meta-token-fed
+paths (owned mentions via official APIs, watchlist comment crawl).
 
 ## D. 💬 Comment tracking (Phase 1)
 
@@ -65,7 +69,7 @@ No Meta API searches *all* public comments by keyword — so comments work in tw
 
 - **Watchlist posts** (`watchlist.json`): paste public IG/FB post URLs (e.g. a viral Le Cafe review).
   Each run, the tracker crawls **new comments** on those posts, matches keywords locally,
-  and notifies with parent-post context (`↳ on: <post>`). Beyond 3 matches/post/day,
+  and surfaces them with parent-post context (`↳ on: <post>`). Beyond 3 matches/post/day,
   extras are stored quietly as digest (see `comments.per_post_cap` in `config.json`).
 - **What unlocks comment bodies:** `META_IG_TOKEN` (+ `media_id` on the entry) for Instagram,
   `META_FB_PAGE_TOKEN` (+ `post_id`) for Facebook. Without tokens the run honestly reports
@@ -81,7 +85,6 @@ Optional real-time adapters activate with tokens (no code change):
 export META_IG_TOKEN=... META_IG_USER_ID=...
 export META_FB_PAGE_TOKEN=... META_FB_PAGE_ID=...
 export THREADS_TOKEN=... THREADS_USER_ID=...
-export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...   # instant alerts
 ```
 
 ## F. $0 production setup (official APIs + cron, no paid services)
@@ -90,7 +93,7 @@ export TELEGRAM_BOT_TOKEN=... TELEGRAM_CHAT_ID=...   # instant alerts
 |---|---|---|
 | Meta/Threads API calls | $0 (standard Graph/Threads usage is free) | `tracker.py` official adapters — dormant until tokens set |
 | Scheduler | $0 `cron`/systemd on existing PC, hotel server, or free tier (Oracle Always Free / AWS free) | `cron/crontab.example`, `cron/tracker.{service,timer}` |
-| Alerts | $0 Slack webhook / Teams Workflows webhook / SMTP email / Telegram | `notify_all()` fan-out; secrets via `.env.example` → `~/.tracker-env` (chmod 600) |
+| Updates surface | $0 webpage dashboard (top panel, auto-refresh) | `index.html` 📊 Latest updates fed by `docs/latest-matches.json`; secrets only for Meta API tokens via `.env.example` → `~/.tracker-env` (chmod 600) |
 | Rate safety | 200 Graph calls/hr enforced in code | `rate_limits` in `config.json` + SQLite `api_budget` bucket — crawlers defer, never burn the token |
 
 Real costs to budget instead: **time** — Meta App Review (Business verification + screencast,
@@ -118,8 +121,8 @@ Then enable Pages (Settings → Pages → `main` / root) and run the workflow on
 
 | File | Purpose |
 |---|---|
-| `index.html` | runnable webpage (GitHub Pages) — client-side scan + results |
-| `tracker.py` | Python backend: RSS → match → SQLite dedup → notify |
+| `index.html` | webpage dashboard — 📊 Latest updates top panel (feed + live scans, filters, NEW highlighting) |
+| `tracker.py` | Python backend: RSS → match → SQLite dedup → console log → dashboard feed |
 | `keywords.json` | Le Cafe-first keyword groups + exclusions (Hyderabad/India pre-excluded) |
 | `.github/workflows/tracker.yml` | scheduled scan + on-demand run, commits JSON feed for the page |
 | `docs/latest-matches.json` | feed the webpage reads for scheduled results |

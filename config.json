@@ -29,26 +29,7 @@
     "official_meta_apis": true
   },
   "notifications": {
-    "console": true,
-    "telegram": {
-      "enabled": false,
-      "note": "Set TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID env vars and flip to true"
-    },
-    "slack": {
-      "enabled": false,
-      "note": "Free: create an Incoming Webhook (api.slack.com/messaging/webhooks), export SLACK_WEBHOOK_URL"
-    },
-    "teams": {
-      "enabled": false,
-      "note": "Free: Power Automate 'When a HTTP request is received' URL, export TEAMS_WEBHOOK_URL"
-    },
-    "email": {
-      "enabled": false,
-      "note": "Free SMTP: export SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/ALERT_EMAIL_TO (+ALERT_EMAIL_FROM). Gmail needs an App Password."
-    },
-    "webhook": {
-      "enabled": false,
-      "url": ""
-    }
+    "dashboard_only": true,
+    "note": "Single surface: every update appears at the top of the webpage dashboard (index.html, fed by docs/latest-matches.json). No push channels by design."
   }
 }
